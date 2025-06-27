@@ -1,0 +1,139 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  create_tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.create_tag.outputs.tag_name }}
+      release_id: ${{ steps.create_release.outputs.id }}
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set Git User
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "github-actions@github.com"
+
+      - name: Create Tag
+        id: create_tag
+        run: |
+          # Get last tag number
+          git fetch --tags
+          LAST_TAG=$(git tag -l 'v*' | sort -V | tail -n 1)
+          
+          # If no tags exist, start with v0.1.0
+          if [ -z "$LAST_TAG" ]; then
+            NEW_TAG="v0.1.0"
+          else
+            # Extract version number and increment patch version
+            VERSION=${LAST_TAG#v}
+            MAJOR=$(echo $VERSION | cut -d. -f1)
+            MINOR=$(echo $VERSION | cut -d. -f2)
+            PATCH=$(echo $VERSION | cut -d. -f3)
+            PATCH=$((PATCH + 1))
+            NEW_TAG="v$MAJOR.$MINOR.$PATCH"
+          fi
+          
+          echo "Creating new tag: $NEW_TAG"
+          echo "tag_name=$NEW_TAG" >> $GITHUB_OUTPUT
+          
+          # Actually create and push the tag
+          git tag $NEW_TAG
+          git push origin $NEW_TAG
+          
+          # Also extract information from Cargo.toml
+          CARGO_NAME=$(grep '^name' Cargo.toml | head -n 1 | cut -d '"' -f 2)
+          echo "cargo_name=$CARGO_NAME" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.create_tag.outputs.tag_name }}
+          release_name: Release ${{ steps.create_tag.outputs.tag_name }}
+          draft: false
+          prerelease: false
+
+  build_and_upload:
+    needs: create_tag
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            suffix: linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: windows-x86_64.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            suffix: macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            suffix: macos-arm64
+    
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          target: ${{ matrix.target }}
+
+      - name: Build Binary
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --target ${{ matrix.target }}
+          
+      - name: Print Binary Location
+        run: |
+          echo "Binary should be at: ./target/${{ matrix.target }}/release/${{ steps.cargo_name.outputs.cargo_name }}"
+          ls -la ./target/${{ matrix.target }}/release/
+        shell: bash
+
+      - name: Extract Cargo Name
+        id: cargo_name
+        run: |
+          CARGO_NAME=$(grep '^name' Cargo.toml | head -n 1 | cut -d '"' -f 2)
+          echo "cargo_name=$CARGO_NAME" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Upload Release Asset (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create_tag.outputs.upload_url }}
+          asset_path: ./target/${{ matrix.target }}/release/${{ steps.cargo_name.outputs.cargo_name }}
+          asset_name: ${{ steps.cargo_name.outputs.cargo_name }}-${{ matrix.suffix }}
+          asset_content_type: application/octet-stream
+
+      - name: Upload Release Asset (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create_tag.outputs.upload_url }}
+          asset_path: ./target/${{ matrix.target }}/release/${{ steps.cargo_name.outputs.cargo_name }}.exe
+          asset_name: ${{ steps.cargo_name.outputs.cargo_name }}-${{ matrix.suffix }}
+          asset_content_type: application/octet-stream
