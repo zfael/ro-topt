@@ -75,18 +75,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            suffix: linux-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             suffix: windows-x86_64.exe
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            suffix: macos-x86_64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            suffix: macos-arm64
     
     runs-on: ${{ matrix.os }}
     steps:
@@ -100,7 +91,6 @@ jobs:
           toolchain: stable
           override: true
           target: ${{ matrix.target }}
-
       - name: Build Binary
         uses: actions-rs/cargo@v1
         with:
@@ -120,16 +110,6 @@ jobs:
           echo "cargo_name=$CARGO_NAME" >> $GITHUB_OUTPUT
         shell: bash
 
-      - name: Upload Release Asset (Linux/macOS)
-        if: matrix.os != 'windows-latest'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create_tag.outputs.upload_url }}
-          asset_path: ./target/${{ matrix.target }}/release/${{ steps.cargo_name.outputs.cargo_name }}
-          asset_name: ${{ steps.cargo_name.outputs.cargo_name }}-${{ matrix.suffix }}
-          asset_content_type: application/octet-stream
 
       - name: Upload Release Asset (Windows)
         if: matrix.os == 'windows-latest'
