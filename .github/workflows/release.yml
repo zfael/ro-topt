@@ -5,6 +5,10 @@ on:
     branches: [ main ]
   workflow_dispatch:  # Allow manual triggering
 
+# Add permissions to allow tag creation
+permissions:
+  contents: write
+
 jobs:
   create_tag:
     runs-on: ubuntu-latest
